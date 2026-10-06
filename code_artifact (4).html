@@ -1,0 +1,703 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>段考考程與座位表大屏顯示系統</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap');
+    
+    * {
+      font-family: 'Noto Sans TC', sans-serif;
+    }
+
+    /* Custom Scrollbar */
+    ::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #0f172a;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #334155;
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #475569;
+    }
+
+    .drag-over {
+      border-top: 3px solid #06b6d4 !important;
+      background-color: rgba(6, 182, 212, 0.15) !important;
+    }
+
+    .active-exam-row {
+      background: linear-gradient(90deg, rgba(14, 116, 144, 0.45) 0%, rgba(15, 23, 42, 0.85) 100%);
+      border-left: 6px solid #06b6d4;
+    }
+
+    /* Seat Cell Styles */
+    .seat-input {
+      background-color: #1e293b;
+      border: 2px solid #334155;
+      color: #ffffff;
+      transition: all 0.2s ease;
+    }
+    .seat-input:focus {
+      border-color: #06b6d4;
+      background-color: #0f172a;
+      outline: none;
+      box-shadow: 0 0 10px rgba(6, 182, 212, 0.4);
+    }
+    .seat-input:hover {
+      border-color: #475569;
+    }
+
+    /* Toast Notification */
+    #toast {
+      transition: opacity 0.3s ease, transform 0.3s ease;
+    }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 h-screen w-screen overflow-hidden flex flex-col justify-between select-none">
+
+  <header class="bg-slate-900 border-b border-slate-800 px-6 py-3 flex items-center justify-between shadow-lg shrink-0">
+    <div class="flex items-center gap-3">
+      <div class="bg-cyan-600 text-white p-2.5 rounded-xl shadow-md flex items-center justify-center">
+        <i class="fa-solid fa-chalkboard-user text-2xl"></i>
+      </div>
+      <div>
+        <h1 class="text-xl font-black text-cyan-400 tracking-wide flex items-center gap-2">
+          段考考程與座位表控制台
+          <span class="text-xs bg-cyan-950 border border-cyan-800 text-cyan-300 font-semibold px-2 py-0.5 rounded-md">6:4 大屏版</span>
+        </h1>
+        <p class="text-xs text-slate-400">大螢幕顯示 / 自訂排程 / 靈活座位配置 / 備份匯入匯出</p>
+      </div>
+    </div>
+
+    <!-- Clock -->
+    <div class="flex items-center gap-4 bg-slate-950/80 border border-slate-800 px-5 py-2 rounded-xl shadow-inner">
+      <div class="text-right">
+        <div id="clock-date" class="text-xs text-slate-400 font-mono">----/--/--</div>
+        <div id="clock-time" class="text-2xl font-mono font-black text-cyan-300 tracking-wider">--:--:--</div>
+      </div>
+      <i class="fa-regular fa-clock text-cyan-400 text-3xl"></i>
+    </div>
+
+    <!-- Storage and Control Buttons -->
+    <div class="flex items-center gap-2">
+      <button onclick="saveAllData(true)" class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-4 py-2 rounded-xl text-sm flex items-center gap-2 transition shadow-lg shadow-emerald-950/50">
+        <i class="fa-solid fa-floppy-disk"></i> 儲存變更
+      </button>
+      <button onclick="exportData()" class="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 px-3 py-2 rounded-xl text-sm flex items-center gap-1.5 transition" title="匯出設定檔">
+        <i class="fa-solid fa-file-export text-cyan-400"></i> 匯出 JSON
+      </button>
+      <label class="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 px-3 py-2 rounded-xl text-sm cursor-pointer flex items-center gap-1.5 transition" title="匯入設定檔">
+        <i class="fa-solid fa-file-import text-amber-400"></i> 匯入
+        <input type="file" id="import-file" accept=".json" class="hidden" onchange="importData(event)">
+      </label>
+      <button onclick="resetAllConfirm()" class="bg-rose-950/60 hover:bg-rose-900 border border-rose-800 text-rose-300 px-3 py-2 rounded-xl text-sm transition" title="重置全部資料">
+        <i class="fa-solid fa-rotate-left"></i> 重置
+      </button>
+    </div>
+  </header>
+
+  <main class="flex-1 grid grid-cols-10 gap-4 p-4 overflow-hidden">
+    
+    <!-- ==================== LEFT: Exam Schedule Panel (6 / 10) ==================== -->
+    <section class="col-span-6 bg-slate-900/90 border border-slate-800 rounded-2xl p-5 flex flex-col justify-between shadow-xl overflow-hidden">
+      <!-- Title & New Exam Form -->
+      <div class="space-y-3 shrink-0">
+        <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+          <div class="flex items-center gap-2">
+            <span class="w-3 h-7 bg-cyan-500 rounded-full"></span>
+            <h2 class="text-2xl font-bold text-slate-100">考程安排與考科清單</h2>
+          </div>
+          <div id="current-exam-status" class="bg-cyan-950 border border-cyan-700/50 text-cyan-300 text-sm font-semibold px-3.5 py-1.5 rounded-full flex items-center gap-2 shadow-inner">
+            <span class="w-2.5 h-2.5 bg-cyan-400 rounded-full me-1"></span> 請選擇考科
+          </div>
+        </div>
+
+        <!-- Add Exam Form -->
+        <form onsubmit="addExam(event)" class="grid grid-cols-12 gap-2 bg-slate-950 p-3 rounded-xl border border-slate-800/80">
+          <div class="col-span-3 flex items-center gap-2">
+            <span class="text-xs text-slate-400 shrink-0">開始</span>
+            <input type="time" id="exam-start" required class="w-full bg-slate-900 border border-slate-700 text-cyan-300 font-mono rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:border-cyan-500">
+          </div>
+          <div class="col-span-3 flex items-center gap-2">
+            <span class="text-xs text-slate-400 shrink-0">結束</span>
+            <input type="time" id="exam-end" required class="w-full bg-slate-900 border border-slate-700 text-cyan-300 font-mono rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:border-cyan-500">
+          </div>
+          <div class="col-span-4 flex flex-col gap-1">
+            <input type="text" id="exam-subject" placeholder="考科名稱 (例：國文考科)" required class="w-full bg-slate-900 border border-slate-700 text-white rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-cyan-500">
+            <input type="text" id="exam-note" placeholder="備註 (例：80分鐘/需劃卡)" class="w-full bg-slate-900/60 border border-slate-800 text-slate-300 text-xs rounded-lg px-2.5 py-1 focus:outline-none focus:border-cyan-500">
+          </div>
+          <div class="col-span-2">
+            <button type="submit" class="w-full h-full bg-cyan-600 hover:bg-cyan-500 text-white font-bold rounded-lg text-sm flex items-center justify-center gap-1 transition shadow-md">
+              <i class="fa-solid fa-plus"></i> 新增
+            </button>
+          </div>
+        </form>
+      </div>
+
+      <!-- Schedule Table -->
+      <div class="flex-1 my-3 overflow-y-auto pr-1">
+        <table class="w-full text-left border-collapse">
+          <thead class="sticky top-0 bg-slate-950 text-slate-400 text-sm font-semibold border-b border-slate-800 z-10">
+            <tr>
+              <th class="py-3 px-3 text-center w-12">當前</th>
+              <th class="py-3 px-3 text-center w-16">排序</th>
+              <th class="py-3 px-4 w-44">時間區間</th>
+              <th class="py-3 px-4">考試科目與備註</th>
+              <th class="py-3 px-3 text-center w-28">操作</th>
+            </tr>
+          </thead>
+          <tbody id="exam-list" class="divide-y divide-slate-800/50">
+            <!-- Dynamic Exam Rows -->
+          </tbody>
+        </table>
+      </div>
+
+      <div class="text-xs text-slate-500 flex justify-between items-center shrink-0 pt-2 border-t border-slate-800/60">
+        <span><i class="fa-solid fa-lightbulb text-amber-400 me-1"></i> 提示：可在操作欄點擊「編輯」修正內容，或點選「當前」單選鈕設定大屏展示之當前科目。</span>
+        <span id="exam-count-summary" class="font-mono text-slate-400">共 0 門考科</span>
+      </div>
+    </section>
+
+    <!-- ==================== RIGHT: Seating Chart Panel (4 / 10) ==================== -->
+    <section class="col-span-4 bg-slate-900/90 border border-slate-800 rounded-2xl p-5 flex flex-col justify-between shadow-xl overflow-hidden">
+      <!-- Title & Grid Controls -->
+      <div class="space-y-3 shrink-0">
+        <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+          <div class="flex items-center gap-2">
+            <span class="w-3 h-7 bg-amber-500 rounded-full"></span>
+            <h2 class="text-2xl font-bold text-slate-100">座位表配置</h2>
+          </div>
+          <span class="text-xs bg-slate-800 text-slate-300 border border-slate-700 px-2.5 py-1 rounded-lg">
+            <i class="fa-solid fa-users me-1 text-cyan-400"></i><span id="seat-total-count">0</span> 座位
+          </span>
+        </div>
+
+        <!-- Grid Size Controls -->
+        <div class="bg-slate-950 p-3 rounded-xl border border-slate-800/80 space-y-2">
+          <div class="flex items-center justify-between gap-2 text-xs text-slate-300">
+            <div class="flex items-center gap-1">
+              <span>列 (Rows):</span>
+              <input type="number" id="grid-rows" value="5" min="1" max="10" onchange="updateSeatGridDimensions()" class="w-12 bg-slate-900 border border-slate-700 text-cyan-300 text-center font-bold rounded py-1 focus:outline-none focus:border-cyan-500">
+            </div>
+            <div class="flex items-center gap-1">
+              <span>欄 (Cols):</span>
+              <input type="number" id="grid-cols" value="6" min="1" max="10" onchange="updateSeatGridDimensions()" class="w-12 bg-slate-900 border border-slate-700 text-cyan-300 text-center font-bold rounded py-1 focus:outline-none focus:border-cyan-500">
+            </div>
+            <button onclick="renderSeats()" class="bg-cyan-900/60 hover:bg-cyan-800 border border-cyan-700 text-cyan-200 px-2.5 py-1 rounded transition text-xs font-semibold">
+              <i class="fa-solid fa-rotate me-1"></i>重繪
+            </button>
+          </div>
+
+          <!-- Quick Action Buttons -->
+          <div class="flex items-center justify-between gap-1 pt-1 border-t border-slate-800/60">
+            <button onclick="autoFillSeatNumbers()" class="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs px-2.5 py-1 rounded transition flex items-center gap-1">
+              <i class="fa-solid fa-arrow-down-1-9 text-cyan-400"></i> 自動填座號
+            </button>
+            <button onclick="clearAllSeats()" class="bg-rose-950/50 hover:bg-rose-900 border border-rose-800/80 text-rose-300 text-xs px-2.5 py-1 rounded transition flex items-center gap-1">
+              <i class="fa-solid fa-eraser"></i> 清空座位
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Blackboard Header -->
+      <div class="my-3 bg-gradient-to-r from-slate-800 via-slate-700 to-slate-800 border border-slate-600/60 text-slate-200 text-center py-2 rounded-xl text-sm font-black tracking-widest shadow-md shrink-0">
+        <i class="fa-solid fa-chalkboard me-2 text-cyan-400"></i>【 講 臺 / 黑 板 】
+      </div>
+
+      <!-- Seat Grid Container -->
+      <div id="seat-grid" class="flex-1 overflow-y-auto p-1.5 bg-slate-950/60 rounded-xl border border-slate-800/60 grid gap-2.5 align-content-start">
+        <!-- Seats Dynamically Generated -->
+      </div>
+
+      <div class="text-xs text-slate-500 text-center mt-2 shrink-0">
+        <i class="fa-solid fa-keyboard me-1 text-slate-400"></i> 輸入座號或姓名後將自動儲存
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Exam Edit Modal -->
+  <div id="edit-modal" class="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center opacity-0 pointer-events-none transition-opacity duration-200">
+    <div class="bg-slate-900 border border-slate-700 rounded-2xl w-11/12 max-w-md p-6 shadow-2xl space-y-4">
+      <div class="flex justify-between items-center border-b border-slate-800 pb-3">
+        <h3 class="text-lg font-bold text-cyan-400 flex items-center gap-2">
+          <i class="fa-solid fa-pen-to-square"></i> 編輯考試時間與考科
+        </h3>
+        <button onclick="closeEditModal()" class="text-slate-400 hover:text-white text-lg p-1">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+      
+      <input type="hidden" id="edit-exam-id">
+
+      <div class="space-y-3">
+        <div>
+          <label class="block text-xs text-slate-400 mb-1">考科名稱</label>
+          <input type="text" id="edit-exam-subject" required class="w-full bg-slate-950 border border-slate-700 text-white rounded-lg px-3 py-2 focus:outline-none focus:border-cyan-500">
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs text-slate-400 mb-1">開始時間</label>
+            <input type="time" id="edit-exam-start" required class="w-full bg-slate-950 border border-slate-700 text-cyan-300 font-mono rounded-lg px-3 py-2 focus:outline-none focus:border-cyan-500">
+          </div>
+          <div>
+            <label class="block text-xs text-slate-400 mb-1">結束時間</label>
+            <input type="time" id="edit-exam-end" required class="w-full bg-slate-950 border border-slate-700 text-cyan-300 font-mono rounded-lg px-3 py-2 focus:outline-none focus:border-cyan-500">
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-xs text-slate-400 mb-1">備註 / 注意事項 (可選)</label>
+          <input type="text" id="edit-exam-note" placeholder="例如：作答時間 80 分鐘 / 需劃卡" class="w-full bg-slate-950 border border-slate-700 text-slate-200 text-sm rounded-lg px-3 py-2 focus:outline-none focus:border-cyan-500">
+        </div>
+      </div>
+
+      <div class="flex justify-end gap-2 pt-3 border-t border-slate-800">
+        <button onclick="closeEditModal()" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-sm font-medium rounded-lg transition">取消</button>
+        <button onclick="saveEditExam()" class="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white text-sm font-bold rounded-lg transition shadow-md">更新儲存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification -->
+  <div id="toast" class="fixed bottom-6 right-6 bg-emerald-600 text-white font-medium px-5 py-3 rounded-xl shadow-2xl flex items-center gap-3 opacity-0 pointer-events-none translate-y-4 z-50">
+    <i id="toast-icon" class="fa-solid fa-circle-check text-xl"></i>
+    <span id="toast-msg">儲存成功！</span>
+  </div>
+
+  <script>
+    // Default Data Structure
+    const DEFAULT_DATA = {
+      schedules: [
+        { id: 1, start: '08:10', end: '09:00', subject: '國文考科', note: '劃卡 / 雙面作答' },
+        { id: 2, start: '09:10', end: '10:00', subject: '英文考科', note: '含聽力測驗' },
+        { id: 3, start: '10:10', end: '11:00', subject: '數學 A', note: '禁帶工程計算機' },
+        { id: 4, start: '11:10', end: '12:00', subject: '自然考科', note: '80分鐘' }
+      ],
+      activeExamId: 1,
+      gridCols: 6,
+      gridRows: 5,
+      seats: {}
+    };
+
+    let examData = JSON.parse(JSON.stringify(DEFAULT_DATA));
+    let draggedIndex = null;
+
+    // Initialization
+    window.addEventListener('DOMContentLoaded', () => {
+      loadSavedData();
+      startClock();
+      renderSchedules();
+      renderSeats();
+    });
+
+    // 1. Clock Display
+    function startClock() {
+      const update = () => {
+        const now = new Date();
+        const dateStr = now.toLocaleDateString('zh-TW', { year: 'numeric', month: '2-digit', day: '2-digit' });
+        const timeStr = now.toLocaleTimeString('zh-TW', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        
+        document.getElementById('clock-date').innerText = dateStr;
+        document.getElementById('clock-time').innerText = timeStr;
+      };
+      update();
+      setInterval(update, 1000);
+    }
+
+    // 2. Render Left Exam Schedule List (No Status/Countdown Column)
+    function renderSchedules() {
+      const listEl = document.getElementById('exam-list');
+      listEl.innerHTML = '';
+
+      if (!examData.schedules || examData.schedules.length === 0) {
+        listEl.innerHTML = `<tr><td colspan="5" class="text-center py-8 text-slate-500">目前無考程安排，請點擊上方新增。</td></tr>`;
+        document.getElementById('exam-count-summary').innerText = `共 0 門考科`;
+        return;
+      }
+
+      examData.schedules.forEach((exam, index) => {
+        const isActive = exam.id === examData.activeExamId;
+        const tr = document.createElement('tr');
+        tr.className = `transition-all duration-150 border-b border-slate-800/60 hover:bg-slate-800/40 ${isActive ? 'active-exam-row font-semibold' : ''}`;
+        
+        tr.draggable = true;
+        tr.ondragstart = (e) => handleDragStart(e, index);
+        tr.ondragover = (e) => handleDragOver(e, tr);
+        tr.ondragleave = (e) => handleDragLeave(e, tr);
+        tr.ondrop = (e) => handleDrop(e, index);
+
+        tr.innerHTML = `
+          <td class="py-3 px-3 text-center">
+            <input type="radio" name="activeExam" ${isActive ? 'checked' : ''} onchange="setActiveExam(${exam.id})" class="w-4 h-4 text-cyan-600 bg-slate-900 border-slate-700 focus:ring-cyan-500 focus:ring-2 cursor-pointer">
+          </td>
+          <td class="py-3 px-3 text-center text-slate-500">
+            <div class="flex items-center justify-center gap-1">
+              <button onclick="moveSchedule(${index}, -1)" ${index === 0 ? 'disabled class="opacity-20 cursor-not-allowed"' : 'class="hover:text-cyan-400"'} title="上移">
+                <i class="fa-solid fa-caret-up text-base"></i>
+              </button>
+              <button onclick="moveSchedule(${index}, 1)" ${index === examData.schedules.length - 1 ? 'disabled class="opacity-20 cursor-not-allowed"' : 'class="hover:text-cyan-400"'} title="下移">
+                <i class="fa-solid fa-caret-down text-base"></i>
+              </button>
+              <i class="fa-solid fa-grip-vertical text-slate-600 ms-1 cursor-grab" title="按住拖曳排序"></i>
+            </div>
+          </td>
+          <td class="py-3 px-4 font-mono ${isActive ? 'text-cyan-300 font-bold' : 'text-slate-300'} text-base">
+            ${exam.start} - ${exam.end}
+          </td>
+          <td class="py-3 px-4">
+            <div class="${isActive ? 'text-white font-bold text-lg' : 'text-slate-200 font-medium'}">${exam.subject}</div>
+            ${exam.note ? `<div class="text-xs ${isActive ? 'text-cyan-200/90' : 'text-slate-400'}"><i class="fa-solid fa-info-circle me-1"></i>${exam.note}</div>` : ''}
+          </td>
+          <td class="py-3 px-3 text-center">
+            <div class="flex items-center justify-center gap-1">
+              <button onclick="openEditModal(${exam.id})" class="text-cyan-400 hover:text-cyan-300 hover:bg-cyan-950/60 p-1.5 rounded-lg transition" title="編輯考科">
+                <i class="fa-solid fa-pen-to-square"></i>
+              </button>
+              <button onclick="deleteSchedule(${exam.id})" class="text-rose-400 hover:text-rose-300 hover:bg-rose-950/60 p-1.5 rounded-lg transition" title="刪除考科">
+                <i class="fa-solid fa-trash-can"></i>
+              </button>
+            </div>
+          </td>
+        `;
+        listEl.appendChild(tr);
+      });
+
+      document.getElementById('exam-count-summary').innerText = `共 ${examData.schedules.length} 門考科`;
+      updateActiveExamHeader();
+      autoSaveToLocalStorage();
+    }
+
+    // 3. Header Exam Summary Banner
+    function updateActiveExamHeader() {
+      const statusHeader = document.getElementById('current-exam-status');
+      const activeObj = examData.schedules.find(s => s.id === examData.activeExamId);
+      if (activeObj) {
+        statusHeader.innerHTML = `<span class="w-2.5 h-2.5 bg-cyan-400 rounded-full me-1"></span> 當前展示：<span class="text-white font-bold me-1">${activeObj.subject}</span><span class="text-cyan-300 font-mono text-xs">(${activeObj.start}-${activeObj.end})</span>`;
+      } else {
+        statusHeader.innerHTML = `<span class="w-2.5 h-2.5 bg-slate-500 rounded-full me-1"></span> 未指定當前考科`;
+      }
+    }
+
+    // 4. Add Exam
+    function addExam(e) {
+      e.preventDefault();
+      const start = document.getElementById('exam-start').value;
+      const end = document.getElementById('exam-end').value;
+      const subject = document.getElementById('exam-subject').value.trim();
+      const note = document.getElementById('exam-note').value.trim();
+
+      if (!start || !end || !subject) return;
+
+      const newId = Date.now();
+      examData.schedules.push({ id: newId, start, end, subject, note });
+      
+      if (!examData.activeExamId) {
+        examData.activeExamId = newId;
+      }
+
+      renderSchedules();
+      document.getElementById('exam-subject').value = '';
+      document.getElementById('exam-note').value = '';
+      showToast('已新增考科！', 'success');
+    }
+
+    // 5. Select Active Exam
+    function setActiveExam(id) {
+      examData.activeExamId = id;
+      renderSchedules();
+    }
+
+    // 6. Move Exam Order via Buttons
+    function moveSchedule(index, direction) {
+      const targetIndex = index + direction;
+      if (targetIndex < 0 || targetIndex >= examData.schedules.length) return;
+      const temp = examData.schedules[index];
+      examData.schedules[index] = examData.schedules[targetIndex];
+      examData.schedules[targetIndex] = temp;
+      renderSchedules();
+    }
+
+    // 7. Drag and Drop Reordering
+    function handleDragStart(e, index) {
+      draggedIndex = index;
+      e.dataTransfer.effectAllowed = 'move';
+    }
+    function handleDragOver(e, tr) {
+      e.preventDefault();
+      tr.classList.add('drag-over');
+    }
+    function handleDragLeave(e, tr) {
+      tr.classList.remove('drag-over');
+    }
+    function handleDrop(e, targetIndex) {
+      e.preventDefault();
+      if (draggedIndex === null || draggedIndex === targetIndex) return;
+      const item = examData.schedules.splice(draggedIndex, 1)[0];
+      examData.schedules.splice(targetIndex, 0, item);
+      draggedIndex = null;
+      renderSchedules();
+    }
+
+    // 8. Delete Exam
+    function deleteSchedule(id) {
+      if (!confirm('確定要刪除這門考科嗎？')) return;
+      examData.schedules = examData.schedules.filter(s => s.id !== id);
+      if (examData.activeExamId === id) {
+        examData.activeExamId = examData.schedules.length > 0 ? examData.schedules[0].id : null;
+      }
+      renderSchedules();
+      showToast('考科已刪除', 'info');
+    }
+
+    // 9. Render Seating Chart Grid
+    function renderSeats() {
+      const gridContainer = document.getElementById('seat-grid');
+      if (!gridContainer) return;
+
+      let rows = parseInt(document.getElementById('grid-rows').value) || examData.gridRows || 5;
+      let cols = parseInt(document.getElementById('grid-cols').value) || examData.gridCols || 6;
+
+      rows = Math.max(1, Math.min(10, rows));
+      cols = Math.max(1, Math.min(10, cols));
+
+      document.getElementById('grid-rows').value = rows;
+      document.getElementById('grid-cols').value = cols;
+      examData.gridRows = rows;
+      examData.gridCols = cols;
+
+      gridContainer.style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`;
+      gridContainer.innerHTML = '';
+
+      if (!examData.seats) examData.seats = {};
+
+      const totalSeats = rows * cols;
+      document.getElementById('seat-total-count').innerText = totalSeats;
+
+      for (let r = 1; r <= rows; r++) {
+        for (let c = 1; c <= cols; c++) {
+          const seatKey = `r${r}c${c}`;
+          const seatVal = examData.seats[seatKey] || '';
+
+          const seatDiv = document.createElement('div');
+          seatDiv.className = 'flex flex-col items-center justify-center p-1 bg-slate-900 border border-slate-800 rounded-xl hover:border-slate-700 transition';
+
+          const input = document.createElement('input');
+          input.type = 'text';
+          input.id = `seat-${seatKey}`;
+          input.value = seatVal;
+          input.placeholder = `${r}-${c}`;
+          input.className = 'seat-input w-full py-2 text-center text-base font-bold rounded-lg tracking-wider';
+          input.oninput = (e) => handleSeatInputChange(seatKey, e.target.value);
+
+          seatDiv.appendChild(input);
+          gridContainer.appendChild(seatDiv);
+        }
+      }
+
+      autoSaveToLocalStorage();
+    }
+
+    // 10. Seat Dimension Updates
+    function updateSeatGridDimensions() {
+      renderSeats();
+      showToast('已更新座位網格規格', 'info');
+    }
+
+    // 11. Individual Seat Cell Editing
+    function handleSeatInputChange(seatKey, value) {
+      if (!examData.seats) examData.seats = {};
+      examData.seats[seatKey] = value.trim();
+      autoSaveToLocalStorage();
+    }
+
+    // 12. Auto Fill Seat Numbers (1~N)
+    function autoFillSeatNumbers() {
+      const rows = examData.gridRows || 5;
+      const cols = examData.gridCols || 6;
+      let count = 1;
+
+      if (!examData.seats) examData.seats = {};
+
+      for (let r = 1; r <= rows; r++) {
+        for (let c = 1; c <= cols; c++) {
+          const seatKey = `r${r}c${c}`;
+          const formattedNum = count < 10 ? `0${count}` : `${count}`;
+          examData.seats[seatKey] = formattedNum;
+          count++;
+        }
+      }
+
+      renderSeats();
+      showToast('已自動填入座號 (1~N)', 'success');
+    }
+
+    // 13. Clear All Seats
+    function clearAllSeats() {
+      if (confirm('確定要清空座位表上所有的姓名/座號嗎？')) {
+        examData.seats = {};
+        renderSeats();
+        showToast('已清空所有座位資訊', 'info');
+      }
+    }
+
+    // 14. Edit Modal Logic
+    function openEditModal(id) {
+      const exam = examData.schedules.find(s => s.id === id);
+      if (!exam) return;
+
+      document.getElementById('edit-exam-id').value = exam.id;
+      document.getElementById('edit-exam-subject').value = exam.subject;
+      document.getElementById('edit-exam-start').value = exam.start;
+      document.getElementById('edit-exam-end').value = exam.end;
+      document.getElementById('edit-exam-note').value = exam.note || '';
+
+      const modal = document.getElementById('edit-modal');
+      modal.classList.remove('opacity-0', 'pointer-events-none');
+      modal.classList.add('opacity-100');
+    }
+
+    function closeEditModal() {
+      const modal = document.getElementById('edit-modal');
+      modal.classList.remove('opacity-100');
+      modal.classList.add('opacity-0', 'pointer-events-none');
+    }
+
+    function saveEditExam() {
+      const id = parseInt(document.getElementById('edit-exam-id').value);
+      const subject = document.getElementById('edit-exam-subject').value.trim();
+      const start = document.getElementById('edit-exam-start').value;
+      const end = document.getElementById('edit-exam-end').value;
+      const note = document.getElementById('edit-exam-note').value.trim();
+
+      if (!subject || !start || !end) {
+        alert('請填寫完整考科名稱與時間！');
+        return;
+      }
+
+      const exam = examData.schedules.find(s => s.id === id);
+      if (exam) {
+        exam.subject = subject;
+        exam.start = start;
+        exam.end = end;
+        exam.note = note;
+        
+        renderSchedules();
+        closeEditModal();
+        showToast('考科資料已修改！', 'success');
+      }
+    }
+
+    // 15. Storage Persistence & Export / Import
+    function autoSaveToLocalStorage() {
+      localStorage.setItem('highschool_exam_app_data_v2', JSON.stringify(examData));
+    }
+
+    function saveAllData(showNotification = true) {
+      autoSaveToLocalStorage();
+      if (showNotification) {
+        showToast('所有考程與座位配置已寫入儲存！', 'success');
+      }
+    }
+
+    function loadSavedData() {
+      const saved = localStorage.getItem('highschool_exam_app_data_v2') || localStorage.getItem('highschool_exam_app_data');
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          if (parsed && typeof parsed === 'object') {
+            examData = { ...DEFAULT_DATA, ...parsed };
+            if (!examData.seats) examData.seats = {};
+          }
+        } catch (e) {
+          console.error('復原儲存資料失敗，還原為預設設定', e);
+          examData = JSON.parse(JSON.stringify(DEFAULT_DATA));
+        }
+      }
+    }
+
+    function exportData() {
+      saveAllData(false);
+      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(examData, null, 2));
+      const downloadAnchor = document.createElement('a');
+      downloadAnchor.setAttribute("href", dataStr);
+      downloadAnchor.setAttribute("download", `段考考程座位表_${new Date().toISOString().slice(0,10)}.json`);
+      document.body.appendChild(downloadAnchor);
+      downloadAnchor.click();
+      downloadAnchor.remove();
+      showToast('已下載設定備份檔 (JSON)', 'success');
+    }
+
+    function importData(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        try {
+          const imported = JSON.parse(e.target.result);
+          if (imported && imported.schedules) {
+            examData = { ...DEFAULT_DATA, ...imported };
+            renderSchedules();
+            renderSeats();
+            saveAllData(false);
+            showToast('資料備份已成功匯入！', 'success');
+          } else {
+            alert('匯入失敗：格式不正確！');
+          }
+        } catch (err) {
+          alert('讀取檔案失敗：請確保選擇正確的 JSON 備份檔。');
+        }
+      };
+      reader.readAsText(file);
+      event.target.value = '';
+    }
+
+    function resetAllConfirm() {
+      if (confirm('警告：確定要清空現有資料，重置為系統預設值嗎？')) {
+        localStorage.removeItem('highschool_exam_app_data_v2');
+        localStorage.removeItem('highschool_exam_app_data');
+        examData = JSON.parse(JSON.stringify(DEFAULT_DATA));
+        renderSchedules();
+        renderSeats();
+        showToast('已重置為初始狀態', 'info');
+      }
+    }
+
+    function showToast(msg, type = 'success') {
+      const toast = document.getElementById('toast');
+      const toastMsg = document.getElementById('toast-msg');
+      const toastIcon = document.getElementById('toast-icon');
+
+      toastMsg.innerText = msg;
+
+      if (type === 'success') {
+        toast.className = toast.className.replace(/bg-\w+-\d+/, 'bg-emerald-600');
+        toastIcon.className = "fa-solid fa-circle-check text-xl";
+      } else if (type === 'info') {
+        toast.className = toast.className.replace(/bg-\w+-\d+/, 'bg-cyan-600');
+        toastIcon.className = "fa-solid fa-circle-info text-xl";
+      }
+
+      toast.classList.remove('opacity-0', 'pointer-events-none', 'translate-y-4');
+      toast.classList.add('opacity-100', 'translate-y-0');
+
+      setTimeout(() => {
+        toast.classList.remove('opacity-100', 'translate-y-0');
+        toast.classList.add('opacity-0', 'pointer-events-none', 'translate-y-4');
+      }, 3000);
+    }
+  </script>
+</body>
+</html>
